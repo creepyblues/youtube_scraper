@@ -705,12 +705,18 @@ async def scrape_transcript(request: ScrapeRequest):
     scraper = TranscriptScraper()
     fallback_result = await loop.run_in_executor(executor, scraper.scrape, request.url)
 
-    # If fallback also failed, return yt-dlp error (more informative usually)
+    # If fallback also failed, return user-friendly error
     if not fallback_result.success:
+        is_cloud_block = "bot" in str(result.error).lower() or "blocking" in str(fallback_result.error).lower()
+        if is_cloud_block:
+            error_msg = "YouTube is blocking requests from this cloud server. Transcript extraction works when running locally. Try: git clone https://github.com/creepyblues/youtube_scraper && cd youtube_scraper && pip install -r requirements.txt && uvicorn backend.main:app"
+        else:
+            error_msg = f"yt-dlp: {result.error} | youtube-transcript-api: {fallback_result.error}"
+
         return ScraperResult(
             success=False,
             method="transcript (combined)",
-            error=f"yt-dlp: {result.error} | youtube-transcript-api: {fallback_result.error}",
+            error=error_msg,
             execution_time_ms=(result.execution_time_ms or 0) + (fallback_result.execution_time_ms or 0)
         )
 
