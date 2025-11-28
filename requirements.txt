@@ -1,0 +1,8 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+yt-dlp>=2024.12.23
+google-api-python-client>=2.150.0
+youtube-transcript-api>=0.6.2
+pydantic>=2.10.0
+python-dotenv>=1.0.0
+httpx>=0.28.0

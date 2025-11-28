@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Metadata Scraper</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>YouTube Metadata Scraper</h1>
+            <p class="subtitle">Extract comprehensive metadata from YouTube videos using multiple methods</p>
+        </header>
+
+        <main>
+            <section class="input-section">
+                <div class="url-input-group">
+                    <input
+                        type="text"
+                        id="videoUrl"
+                        placeholder="Paste YouTube URL here (e.g., https://www.youtube.com/watch?v=...)"
+                        autocomplete="off"
+                    >
+                    <button id="scrapeBtn" onclick="scrapeVideo()">
+                        <span class="btn-text">Scrape</span>
+                        <span class="btn-loader hidden"></span>
+                    </button>
+                </div>
+
+                <div class="options-row">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="includeComments">
+                        <span>Include Comments</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="includeTranscript" checked>
+                        <span>Include Transcript</span>
+                    </label>
+                </div>
+
+                <div class="method-selector">
+                    <span class="label">Scraping Method:</span>
+                    <div class="method-buttons">
+                        <button class="method-btn active" data-method="compare">Compare All</button>
+                        <button class="method-btn" data-method="ytdlp">yt-dlp</button>
+                        <button class="method-btn" data-method="youtube-api">YouTube API</button>
+                        <button class="method-btn" data-method="transcript">Transcript API</button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="errorSection" class="error-section hidden">
+                <div class="error-content">
+                    <span class="error-icon">⚠️</span>
+                    <span id="errorMessage"></span>
+                </div>
+            </section>
+
+            <section id="resultsSection" class="results-section hidden">
+                <div id="comparisonSummary" class="comparison-summary hidden">
+                    <h2>Comparison Summary</h2>
+                    <div id="summaryContent"></div>
+                </div>
+
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="overview">Overview</button>
+                    <button class="tab-btn" data-tab="engagement">Engagement</button>
+                    <button class="tab-btn" data-tab="transcript">Transcript</button>
+                    <button class="tab-btn" data-tab="chapters">Chapters</button>
+                    <button class="tab-btn" data-tab="tags">Tags</button>
+                    <button class="tab-btn" data-tab="thumbnails">Thumbnails</button>
+                    <button class="tab-btn" data-tab="technical">Technical</button>
+                    <button class="tab-btn" data-tab="comments">Comments</button>
+                    <button class="tab-btn" data-tab="raw">Raw JSON</button>
+                </div>
+
+                <div class="tab-content">
+                    <div id="tab-overview" class="tab-pane active"></div>
+                    <div id="tab-engagement" class="tab-pane"></div>
+                    <div id="tab-transcript" class="tab-pane"></div>
+                    <div id="tab-chapters" class="tab-pane"></div>
+                    <div id="tab-tags" class="tab-pane"></div>
+                    <div id="tab-thumbnails" class="tab-pane"></div>
+                    <div id="tab-technical" class="tab-pane"></div>
+                    <div id="tab-comments" class="tab-pane"></div>
+                    <div id="tab-raw" class="tab-pane"></div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Built with FastAPI, yt-dlp, YouTube Data API v3, and youtube-transcript-api</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
