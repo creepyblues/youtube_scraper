@@ -350,6 +350,8 @@ function renderEngagementTab(data, results) {
     `;
 }
 
+let transcriptViewMode = 'timestamped';
+
 function renderTranscriptTab(data, results) {
     const container = document.getElementById('tab-transcript');
     const transcript = data.transcript || [];
@@ -359,25 +361,96 @@ function renderTranscriptTab(data, results) {
         return;
     }
 
+    // Store transcript data for toggling
+    container.dataset.transcript = JSON.stringify(transcript);
+
+    const wordCount = transcript.reduce((acc, seg) => acc + seg.text.split(/\s+/).length, 0);
+
     let html = `
-        <p style="margin-bottom: 1rem; color: var(--text-secondary);">
-            ${transcript.length} segments found
-        </p>
-        <div class="transcript-box">
+        <div class="transcript-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
+            <p style="color: var(--text-secondary); margin: 0;">
+                ${transcript.length} segments · ~${wordCount.toLocaleString()} words
+            </p>
+            <div class="transcript-toggle" style="display: flex; gap: 0.5rem;">
+                <button class="toggle-btn ${transcriptViewMode === 'timestamped' ? 'active' : ''}" data-mode="timestamped" onclick="toggleTranscriptView('timestamped')">
+                    Timestamped
+                </button>
+                <button class="toggle-btn ${transcriptViewMode === 'clean' ? 'active' : ''}" data-mode="clean" onclick="toggleTranscriptView('clean')">
+                    Clean Text
+                </button>
+                <button class="copy-btn" onclick="copyTranscript()" title="Copy to clipboard">
+                    📋 Copy
+                </button>
+            </div>
+        </div>
+        <div id="transcript-content"></div>
     `;
 
-    for (const segment of transcript) {
-        const timestamp = formatTimestamp(segment.start);
-        html += `
-            <div class="transcript-segment">
-                <span class="timestamp">${timestamp}</span>
-                <span class="text">${escapeHtml(segment.text)}</span>
+    container.innerHTML = html;
+    updateTranscriptContent(transcript);
+}
+
+function toggleTranscriptView(mode) {
+    transcriptViewMode = mode;
+
+    // Update button states
+    document.querySelectorAll('.transcript-toggle .toggle-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+
+    // Re-render content
+    const container = document.getElementById('tab-transcript');
+    const transcript = JSON.parse(container.dataset.transcript || '[]');
+    updateTranscriptContent(transcript);
+}
+
+function updateTranscriptContent(transcript) {
+    const contentContainer = document.getElementById('transcript-content');
+
+    if (transcriptViewMode === 'timestamped') {
+        let html = '<div class="transcript-box">';
+        for (const segment of transcript) {
+            const timestamp = formatTimestamp(segment.start);
+            html += `
+                <div class="transcript-segment">
+                    <span class="timestamp">${timestamp}</span>
+                    <span class="text">${escapeHtml(segment.text)}</span>
+                </div>
+            `;
+        }
+        html += '</div>';
+        contentContainer.innerHTML = html;
+    } else {
+        const cleanText = transcript.map(seg => seg.text).join(' ');
+        contentContainer.innerHTML = `
+            <div class="transcript-box clean-text" style="white-space: pre-wrap; line-height: 1.8;">
+                ${escapeHtml(cleanText)}
             </div>
         `;
     }
+}
 
-    html += '</div>';
-    container.innerHTML = html;
+function copyTranscript() {
+    const container = document.getElementById('tab-transcript');
+    const transcript = JSON.parse(container.dataset.transcript || '[]');
+
+    let textToCopy;
+    if (transcriptViewMode === 'timestamped') {
+        textToCopy = transcript.map(seg => `[${formatTimestamp(seg.start)}] ${seg.text}`).join('\n');
+    } else {
+        textToCopy = transcript.map(seg => seg.text).join(' ');
+    }
+
+    navigator.clipboard.writeText(textToCopy).then(() => {
+        const copyBtn = document.querySelector('.copy-btn');
+        const originalText = copyBtn.textContent;
+        copyBtn.textContent = '✓ Copied!';
+        setTimeout(() => {
+            copyBtn.textContent = originalText;
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+    });
 }
 
 function renderChaptersTab(data, results) {

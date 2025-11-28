@@ -368,6 +368,49 @@ header h1 {
     overflow-y: auto;
 }
 
+.transcript-box.clean-text {
+    font-size: 1rem;
+    color: var(--text);
+}
+
+.toggle-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.toggle-btn:hover {
+    border-color: var(--primary);
+    color: var(--text);
+}
+
+.toggle-btn.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.copy-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.copy-btn:hover {
+    border-color: var(--success);
+    color: var(--success);
+}
+
 .transcript-segment {
     padding: 0.5rem 0;
     border-bottom: 1px solid var(--border);
