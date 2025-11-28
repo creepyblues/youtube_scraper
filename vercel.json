@@ -1,0 +1,7 @@
+{
+  "buildCommand": "pip install -r requirements.txt",
+  "outputDirectory": "frontend",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" }
+  ]
+}
