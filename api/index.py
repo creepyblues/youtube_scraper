@@ -280,7 +280,122 @@ class YtdlpScraper:
         return count
 
 
-# ============ Transcript Scraper ============
+# ============ yt-dlp Transcript Extractor ============
+class YtdlpTranscriptExtractor:
+    def __init__(self, preferred_languages: list[str] = None):
+        self.preferred_languages = preferred_languages or ['en', 'en-US', 'en-GB', 'en-orig']
+
+    def extract(self, url: str) -> ScraperResult:
+        start_time = time.time()
+        try:
+            video_id = extract_video_id(url)
+            if not video_id:
+                return ScraperResult(success=False, method="yt-dlp-transcript", error="Could not extract video ID")
+
+            opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'skip_download': True,
+                'writesubtitles': True,
+                'writeautomaticsub': True,
+                'subtitleslangs': self.preferred_languages,
+                'subtitlesformat': 'json3',
+            }
+
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+
+            if not info:
+                return ScraperResult(success=False, method="yt-dlp-transcript", error="Failed to extract video info")
+
+            # Try to get subtitles from requested_subtitles or automatic_captions
+            subtitles = info.get('subtitles', {}) or {}
+            auto_captions = info.get('automatic_captions', {}) or {}
+            requested = info.get('requested_subtitles', {}) or {}
+
+            transcript_data = []
+            used_language = None
+            is_auto = False
+
+            # First try requested subtitles (these have actual content)
+            for lang in self.preferred_languages:
+                if lang in requested and requested[lang]:
+                    sub_info = requested[lang]
+                    if 'data' in sub_info:
+                        transcript_data = self._parse_json3(sub_info['data'])
+                        used_language = lang
+                        is_auto = lang in auto_captions
+                        break
+
+            # If no requested subtitles, try to fetch from URL
+            if not transcript_data:
+                import httpx
+                for lang in self.preferred_languages:
+                    for source, is_auto_source in [(subtitles, False), (auto_captions, True)]:
+                        if lang in source:
+                            for fmt in source[lang]:
+                                if fmt.get('ext') == 'json3' and fmt.get('url'):
+                                    try:
+                                        resp = httpx.get(fmt['url'], timeout=10)
+                                        if resp.status_code == 200:
+                                            import json
+                                            data = resp.json()
+                                            transcript_data = self._parse_json3(data)
+                                            used_language = lang
+                                            is_auto = is_auto_source
+                                            break
+                                    except:
+                                        continue
+                            if transcript_data:
+                                break
+                    if transcript_data:
+                        break
+
+            if not transcript_data:
+                return ScraperResult(success=False, method="yt-dlp-transcript",
+                                     error="No transcript found via yt-dlp",
+                                     execution_time_ms=round((time.time() - start_time) * 1000, 2))
+
+            segments = [TranscriptSegment(text=seg['text'], start=seg['start'], duration=seg['duration'])
+                        for seg in transcript_data if seg.get('text')]
+            full_text = ' '.join(seg.text for seg in segments)
+
+            available_languages = list(set(subtitles.keys()) | set(auto_captions.keys()))
+
+            metadata = VideoMetadata(
+                video_id=video_id, title=info.get('title', ''), transcript=segments,
+                available_languages=available_languages,
+                webpage_url=f"https://www.youtube.com/watch?v={video_id}",
+                scraper_method="yt-dlp-transcript",
+                raw_data={"transcript_language": used_language, "is_auto_generated": is_auto,
+                          "word_count": len(full_text.split()), "segment_count": len(segments)}
+            )
+
+            return ScraperResult(success=True, method="yt-dlp-transcript", data=metadata,
+                                 execution_time_ms=round((time.time() - start_time) * 1000, 2),
+                                 fields_extracted=len(segments) + len(available_languages) + 2)
+
+        except Exception as e:
+            return ScraperResult(success=False, method="yt-dlp-transcript", error=f"Error: {str(e)}",
+                                 execution_time_ms=round((time.time() - start_time) * 1000, 2))
+
+    def _parse_json3(self, data: dict) -> list[dict]:
+        """Parse YouTube's json3 subtitle format"""
+        segments = []
+        events = data.get('events', []) if isinstance(data, dict) else []
+        for event in events:
+            if 'segs' in event:
+                text = ''.join(seg.get('utf8', '') for seg in event['segs']).strip()
+                if text:
+                    segments.append({
+                        'text': text,
+                        'start': event.get('tStartMs', 0) / 1000,
+                        'duration': event.get('dDurationMs', 0) / 1000
+                    })
+        return segments
+
+
+# ============ Transcript Scraper (youtube-transcript-api) ============
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
 
@@ -576,10 +691,30 @@ async def scrape_with_youtube_api(request: ScrapeRequest):
 
 @app.post("/api/scrape/transcript", response_model=ScraperResult)
 async def scrape_transcript(request: ScrapeRequest):
+    """Try yt-dlp first (works better on cloud), fallback to youtube-transcript-api"""
     loop = asyncio.get_event_loop()
+
+    # Try yt-dlp transcript extraction first (better for cloud IPs)
+    ytdlp_extractor = YtdlpTranscriptExtractor()
+    result = await loop.run_in_executor(executor, ytdlp_extractor.extract, request.url)
+
+    if result.success:
+        return result
+
+    # Fallback to youtube-transcript-api
     scraper = TranscriptScraper()
-    result = await loop.run_in_executor(executor, scraper.scrape, request.url)
-    return result
+    fallback_result = await loop.run_in_executor(executor, scraper.scrape, request.url)
+
+    # If fallback also failed, return yt-dlp error (more informative usually)
+    if not fallback_result.success:
+        return ScraperResult(
+            success=False,
+            method="transcript (combined)",
+            error=f"yt-dlp: {result.error} | youtube-transcript-api: {fallback_result.error}",
+            execution_time_ms=(result.execution_time_ms or 0) + (fallback_result.execution_time_ms or 0)
+        )
+
+    return fallback_result
 
 
 @app.post("/api/scrape/compare", response_model=ComparisonResult)
@@ -588,12 +723,12 @@ async def compare_scrapers(request: ScrapeRequest):
 
     ytdlp_scraper = YtdlpScraper(include_comments=request.include_comments, include_subtitles=request.include_transcript)
     api_scraper = YouTubeAPIScraper()
-    transcript_scraper = TranscriptScraper()
+    ytdlp_transcript = YtdlpTranscriptExtractor()
 
     results = await asyncio.gather(
         loop.run_in_executor(executor, ytdlp_scraper.scrape, request.url),
         loop.run_in_executor(executor, lambda: api_scraper.scrape(request.url, request.include_comments)),
-        loop.run_in_executor(executor, transcript_scraper.scrape, request.url)
+        loop.run_in_executor(executor, ytdlp_transcript.extract, request.url)
     )
 
     comparison_summary = generate_comparison_summary(results)
