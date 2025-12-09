@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from backend.scrapers import YtdlpScraper, YouTubeAPIScraper, TranscriptScraper
+from backend.scrapers import YtdlpScraper, YouTubeAPIScraper, TranscriptScraper, AITranscriber
 from backend.models import ScraperResult, ComparisonResult
 
 
@@ -41,6 +41,8 @@ class ScrapeRequest(BaseModel):
 class TranscriptRequest(BaseModel):
     url: str
     include_timestamps: bool = False
+    use_ai_fallback: bool = True  # Enable AI transcription as fallback
+    force_ai: bool = False  # Force AI transcription even if captions exist
 
 
 @app.get("/")
@@ -81,6 +83,32 @@ async def scrape_transcript(request: ScrapeRequest):
     loop = asyncio.get_event_loop()
     scraper = TranscriptScraper()
     result = await loop.run_in_executor(executor, scraper.scrape, request.url)
+
+    # If transcript scraping failed and AI fallback is available, try AI transcription
+    if not result.success:
+        ai_transcriber = AITranscriber()
+        if ai_transcriber.is_available():
+            ai_result = await loop.run_in_executor(executor, ai_transcriber.scrape, request.url)
+            if ai_result.success:
+                return ai_result
+
+    return result
+
+
+@app.post("/api/scrape/transcript-ai", response_model=ScraperResult)
+async def scrape_transcript_ai(request: ScrapeRequest):
+    """Transcribe video using AI (Whisper). Only available locally."""
+    loop = asyncio.get_event_loop()
+    ai_transcriber = AITranscriber()
+
+    if not ai_transcriber.is_available():
+        return ScraperResult(
+            success=False,
+            method="ai-whisper",
+            error="AI transcription is only available when running locally (not in cloud environments)"
+        )
+
+    result = await loop.run_in_executor(executor, ai_transcriber.scrape, request.url)
     return result
 
 
@@ -221,15 +249,45 @@ def generate_comparison_summary(results: list[ScraperResult]) -> dict:
 @app.get("/api/transcript/text")
 async def get_transcript_text(
     url: str = Query(..., description="YouTube video URL"),
-    include_timestamps: bool = Query(False, description="Include timestamps in output")
+    include_timestamps: bool = Query(False, description="Include timestamps in output"),
+    use_ai_fallback: bool = Query(True, description="Use AI transcription if captions unavailable"),
+    force_ai: bool = Query(False, description="Force AI transcription (local only)")
 ):
     loop = asyncio.get_event_loop()
-    scraper = TranscriptScraper()
 
+    # If force_ai, use AI transcription directly
+    if force_ai:
+        ai_transcriber = AITranscriber()
+        if not ai_transcriber.is_available():
+            raise HTTPException(
+                status_code=400,
+                detail="AI transcription is only available when running locally"
+            )
+        result = await loop.run_in_executor(
+            executor,
+            lambda: ai_transcriber.get_transcript_text(url, include_timestamps=include_timestamps)
+        )
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+
+    # Try regular transcript scraper first
+    scraper = TranscriptScraper()
     result = await loop.run_in_executor(
         executor,
         lambda: scraper.get_transcript_text(url, include_timestamps=include_timestamps)
     )
+
+    # If failed and AI fallback enabled, try AI transcription
+    if not result["success"] and use_ai_fallback:
+        ai_transcriber = AITranscriber()
+        if ai_transcriber.is_available():
+            ai_result = await loop.run_in_executor(
+                executor,
+                lambda: ai_transcriber.get_transcript_text(url, include_timestamps=include_timestamps)
+            )
+            if ai_result["success"]:
+                return ai_result
 
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["error"])

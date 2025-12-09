@@ -102,7 +102,8 @@ function getEndpoint() {
         'compare': '/api/scrape/compare',
         'ytdlp': '/api/scrape/ytdlp',
         'youtube-api': '/api/scrape/youtube-api',
-        'transcript': '/api/scrape/transcript'
+        'transcript': '/api/scrape/transcript',
+        'transcript-ai': '/api/scrape/transcript-ai'
     };
     return endpoints[selectedMethod] || endpoints['compare'];
 }
@@ -366,11 +367,23 @@ function renderTranscriptTab(data, results) {
 
     const wordCount = transcript.reduce((acc, seg) => acc + seg.text.split(/\s+/).length, 0);
 
+    // Check if this was AI transcribed
+    const rawData = data.raw_data || {};
+    const isAITranscribed = rawData.is_ai_transcribed === true;
+    const whisperModel = rawData.whisper_model || '';
+
     let html = `
         <div class="transcript-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
-            <p style="color: var(--text-secondary); margin: 0;">
-                ${transcript.length} segments · ~${wordCount.toLocaleString()} words
-            </p>
+            <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                <p style="color: var(--text-secondary); margin: 0;">
+                    ${transcript.length} segments · ~${wordCount.toLocaleString()} words
+                </p>
+                ${isAITranscribed ? `
+                    <span class="ai-badge" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500;">
+                        🤖 AI Transcribed${whisperModel ? ` (${whisperModel})` : ''}
+                    </span>
+                ` : ''}
+            </div>
             <div class="transcript-toggle" style="display: flex; gap: 0.5rem;">
                 <button class="toggle-btn ${transcriptViewMode === 'timestamped' ? 'active' : ''}" data-mode="timestamped" onclick="toggleTranscriptView('timestamped')">
                     Timestamped
