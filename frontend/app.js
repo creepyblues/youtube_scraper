@@ -102,8 +102,7 @@ function getEndpoint() {
         'compare': '/api/scrape/compare',
         'ytdlp': '/api/scrape/ytdlp',
         'youtube-api': '/api/scrape/youtube-api',
-        'transcript': '/api/scrape/transcript',
-        'transcript-ai': '/api/scrape/transcript-ai'
+        'transcript': '/api/scrape/transcript'
     };
     return endpoints[selectedMethod] || endpoints['compare'];
 }
