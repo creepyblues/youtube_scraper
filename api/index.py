@@ -2,11 +2,14 @@ import asyncio
 import os
 import re
 import time
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from dotenv import load_dotenv
 load_dotenv()
+
+from openai import OpenAI
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -395,6 +398,188 @@ class YtdlpTranscriptExtractor:
         return segments
 
 
+# ============ OpenAI Whisper API Transcriber ============
+class OpenAIWhisperTranscriber:
+    """Transcribe YouTube audio using OpenAI's Whisper API"""
+
+    def __init__(self):
+        self.api_key = os.getenv('OPENAI_API_KEY')
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            if not self.api_key:
+                raise ValueError("OPENAI_API_KEY not configured")
+            self._client = OpenAI(api_key=self.api_key)
+        return self._client
+
+    def is_available(self) -> bool:
+        return bool(self.api_key)
+
+    def scrape(self, url: str) -> ScraperResult:
+        start_time = time.time()
+
+        if not self.is_available():
+            return ScraperResult(
+                success=False,
+                method="openai-whisper",
+                error="OPENAI_API_KEY not configured. Add it to your environment variables."
+            )
+
+        try:
+            video_id = extract_video_id(url)
+            if not video_id:
+                return ScraperResult(
+                    success=False,
+                    method="openai-whisper",
+                    error="Could not extract video ID from URL"
+                )
+
+            # Download audio using yt-dlp
+            audio_path = self._download_audio(url)
+            if not audio_path:
+                return ScraperResult(
+                    success=False,
+                    method="openai-whisper",
+                    error="Failed to download audio from YouTube",
+                    execution_time_ms=round((time.time() - start_time) * 1000, 2)
+                )
+
+            try:
+                # Transcribe with OpenAI Whisper API
+                transcript_data = self._transcribe_audio(audio_path)
+
+                if not transcript_data:
+                    return ScraperResult(
+                        success=False,
+                        method="openai-whisper",
+                        error="Transcription failed",
+                        execution_time_ms=round((time.time() - start_time) * 1000, 2)
+                    )
+
+                segments = transcript_data.get('segments', [])
+                full_text = transcript_data.get('text', '')
+
+                transcript_segments = [
+                    TranscriptSegment(
+                        text=seg.get('text', '').strip(),
+                        start=seg.get('start', 0),
+                        duration=seg.get('end', 0) - seg.get('start', 0)
+                    )
+                    for seg in segments if seg.get('text', '').strip()
+                ]
+
+                # If no segments but we have text, create a single segment
+                if not transcript_segments and full_text:
+                    transcript_segments = [
+                        TranscriptSegment(text=full_text, start=0, duration=0)
+                    ]
+
+                metadata = VideoMetadata(
+                    video_id=video_id,
+                    title="",
+                    transcript=transcript_segments,
+                    webpage_url=f"https://www.youtube.com/watch?v={video_id}",
+                    scraper_method="openai-whisper",
+                    raw_data={
+                        "language": transcript_data.get('language', 'unknown'),
+                        "word_count": len(full_text.split()),
+                        "segment_count": len(transcript_segments),
+                        "full_transcript_text": full_text
+                    }
+                )
+
+                return ScraperResult(
+                    success=True,
+                    method="openai-whisper",
+                    data=metadata,
+                    execution_time_ms=round((time.time() - start_time) * 1000, 2),
+                    fields_extracted=len(transcript_segments) + 2
+                )
+
+            finally:
+                # Clean up temp file
+                if os.path.exists(audio_path):
+                    os.remove(audio_path)
+
+        except Exception as e:
+            return ScraperResult(
+                success=False,
+                method="openai-whisper",
+                error=f"Error: {str(e)}",
+                execution_time_ms=round((time.time() - start_time) * 1000, 2)
+            )
+
+    def _download_audio(self, url: str) -> Optional[str]:
+        """Download audio from YouTube video using yt-dlp"""
+        try:
+            # Create temp file for audio
+            temp_dir = tempfile.gettempdir()
+            temp_path = os.path.join(temp_dir, f"yt_audio_{int(time.time())}")
+
+            ydl_opts = {
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'outtmpl': temp_path + '.%(ext)s',
+                'quiet': True,
+                'no_warnings': True,
+                'extract_audio': True,
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '64',  # Lower quality = smaller file = faster upload
+                }],
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            # Find the output file
+            for ext in ['mp3', 'm4a', 'webm', 'opus']:
+                path = f"{temp_path}.{ext}"
+                if os.path.exists(path):
+                    return path
+
+            return None
+
+        except Exception as e:
+            print(f"Audio download error: {e}")
+            return None
+
+    def _transcribe_audio(self, audio_path: str) -> Optional[dict]:
+        """Transcribe audio file using OpenAI Whisper API"""
+        try:
+            # Check file size (OpenAI limit is 25MB)
+            file_size = os.path.getsize(audio_path)
+            if file_size > 25 * 1024 * 1024:
+                raise ValueError(f"Audio file too large ({file_size / 1024 / 1024:.1f}MB). Max is 25MB.")
+
+            with open(audio_path, 'rb') as audio_file:
+                response = self.client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="verbose_json",
+                    timestamp_granularities=["segment"]
+                )
+
+            return {
+                'text': response.text,
+                'language': getattr(response, 'language', 'unknown'),
+                'segments': [
+                    {
+                        'start': seg.start,
+                        'end': seg.end,
+                        'text': seg.text
+                    }
+                    for seg in getattr(response, 'segments', [])
+                ]
+            }
+
+        except Exception as e:
+            print(f"Transcription error: {e}")
+            raise
+
+
 # ============ Transcript Scraper (youtube-transcript-api) ============
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
@@ -721,6 +906,23 @@ async def scrape_transcript(request: ScrapeRequest):
         )
 
     return fallback_result
+
+
+@app.post("/api/scrape/transcript-ai", response_model=ScraperResult)
+async def scrape_transcript_ai(request: ScrapeRequest):
+    """Transcribe video using OpenAI Whisper API"""
+    loop = asyncio.get_event_loop()
+    transcriber = OpenAIWhisperTranscriber()
+
+    if not transcriber.is_available():
+        return ScraperResult(
+            success=False,
+            method="openai-whisper",
+            error="OPENAI_API_KEY not configured. Add it to your Vercel environment variables."
+        )
+
+    result = await loop.run_in_executor(executor, transcriber.scrape, request.url)
+    return result
 
 
 @app.post("/api/scrape/compare", response_model=ComparisonResult)
